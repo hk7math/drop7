@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drop7 - Full Edition</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body { background: #111; color: white; font-family: 'Segoe UI', Tahoma, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; overflow: hidden; }
+        .stats { display: flex; gap: 40px; margin-bottom: 15px; font-weight: bold; }
+        .label { font-size: 11px; color: #888; display: block; text-align: center; letter-spacing: 1px; }
+        #score, #moves { font-size: 28px; }
+        #combo-ui { color: #FFD700; font-size: 16px; height: 20px; text-align: center; }
+        
+        canvas { background: #222; border: 4px solid #444; border-radius: 8px; cursor: pointer; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+
+        #overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9); display: none;
+            flex-direction: column; align-items: center; justify-content: center;
+            z-index: 1000;
+        }
+        .modal { background: #222; padding: 30px; border-radius: 15px; border: 2px solid #FFD700; text-align: center; width: 280px; }
+        input { padding: 12px; border-radius: 5px; border: none; margin: 10px 0; width: 80%; font-size: 16px; }
+        button { background: #FFD700; border: none; padding: 10px 20px; font-weight: bold; cursor: pointer; border-radius: 5px; width: 100%; }
+        #leaderboard-list { margin-top: 20px; text-align: left; color: #aaa; font-size: 13px; line-height: 1.6; }
+        .top-rank { color: #FFD700; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div class="stats">
+        <div style="min-width: 80px;">
+            <span class="label">SCORE</span>
+            <span id="score">0</span>
+            <div id="combo-ui"></div>
+        </div>
+        <div style="min-width: 80px;">
+            <span class="label">NEXT FLOOR</span>
+            <span id="moves">5</span>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas" width="350" height="400"></canvas>
+
+    <div id="overlay">
+        <div class="modal">
+            <h2 style="margin:0; color:#FFD700;">GAME OVER</h2>
+            <p>Score: <span id="modal-score">0</span></p>
+            <input type="text" id="playerName" placeholder="Your Name" maxlength="10">
+            <button id="saveBtn">SUBMIT & RESTART</button>
+            <div id="leaderboard-list">Fetching top scores...</div>
+        </div>
+    </div>
+
+<script>
+// --- SUPABASE CONFIG ---
+const SUPABASE_URL = 'https://pspgokziawpuhjrmsnhw.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_D6d77UoUxIqVC9nsriL0Ig_ouLktESd';
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// --- GAME CONSTANTS ---
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const ROWS = 7, COLS = 7, SIZE = 50, OFFSET_Y = 50;
+const FALL_SPEED = 18;
+
+// --- STATE ---
+let score = 0;
+let movesLeft = 5;
+let comboCount = 0;
+let isBusy = false;
+let riseOffset = 0;
+let board = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+let nextDiscVal = Math.floor(Math.random() * 7) + 1;
+
+class Disc {
+    constructor(val, col, y, type = 'num', health = 1) {
+        this.val = val;
+        this.col = col;
+        this.y = y;
+        this.targetY = y;
+        this.type = type;
+        this.health = health;
+    }
+    update() {
+        if (this.y < this.targetY) {
+            this.y = Math.min(this.targetY, this.y + FALL_SPEED);
+        }
+    }
+    draw(dy = 0) {
+        const x = this.col * SIZE + SIZE/2;
+        const drawY = this.y - dy;
+        const colors = ["#444", "#FF5733", "#33FF57", "#3357FF", "#F333FF", "#FFF333", "#33FFF3", "#FFA500"];
+        
+        ctx.beginPath();
+        ctx.arc(x, drawY, SIZE/2 - 4, 0, Math.PI * 2);
+        ctx.fillStyle = this.type === 'gray' ? (this.health === 2 ? "#333" : "#666") : colors[this.val];
+        ctx.fill();
+
+        if (this.type === 'num') {
+            ctx.fillStyle = "black";
+            ctx.font = "bold 22px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(this.val, x, drawY);
+        } else if (this.health === 1) {
+            ctx.strokeStyle = "rgba(255,255,255,0.4)"; ctx.lineWidth = 3;
+            ctx.moveTo(x-10, drawY-10); ctx.lineTo(x+10, drawY+10);
+            ctx.moveTo(x+10, drawY-10); ctx.lineTo(x-10, drawY+10);
+            ctx.stroke();
+        }
+    }
+}
+
+// --- CORE LOGIC ---
+function isAnyMoving() {
+    for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+            if (board[r][c] && Math.abs(board[r][c].y - board[r][c].targetY) > 0.1) return true;
+        }
+    }
+    return false;
+}
+
+async function dropDisc(col) {
+    if (isBusy || isAnyMoving()) return;
+    
+    let targetR = -1;
+    for (let r = ROWS - 1; r >= 0; r--) {
+        if (!board[r][col]) { targetR = r; break; }
+    }
+
+    if (targetR !== -1) {
+        isBusy = true;
+        comboCount = 0;
+        updateComboUI();
+        
+        board[targetR][col] = new Disc(nextDiscVal, col, 0, 'num');
+        board[targetR][col].targetY = targetR * SIZE + SIZE/2 + OFFSET_Y;
+        nextDiscVal = Math.floor(Math.random() * 7) + 1;
+        
+        await waitForFalling();
+        await runChainReactions();
+        
+        movesLeft--;
+        if (movesLeft <= 0) {
+            await riseFloor();
+            movesLeft = 5;
+        }
+        
+        document.getElementById('moves').innerText = movesLeft;
+        isBusy = false;
+    }
+}
+
+async function runChainReactions() {
+    let changed = true;
+    while (changed) {
+        let toPop = new Set();
+        
+        for (let c = 0; c < COLS; c++) {
+            let colIndices = [];
+            for (let r = 0; r < ROWS; r++) if (board[r][c]) colIndices.push(r);
+            let count = colIndices.length;
+            colIndices.forEach(r => {
+                if (board[r][c]?.type === 'num' && board[r][c].val === count) toPop.add(`${r},${c}`);
+            });
+        }
+        
+        for (let r = 0; r < ROWS; r++) {
+            let start = -1;
+            for (let c = 0; c <= COLS; c++) {
+                if (c < COLS && board[r][c]) { if (start === -1) start = c; }
+                else if (start !== -1) {
+                    let count = c - start;
+                    for (let i = start; i < c; i++) {
+                        if (board[r][i]?.type === 'num' && board[r][i].val === count) toPop.add(`${r},${i}`);
+                    }
+                    start = -1;
+                }
+            }
+        }
+
+        if (toPop.size > 0) {
+            comboCount++;
+            updateComboUI();
+            await new Promise(r => setTimeout(r, 250));
+            
+            toPop.forEach(pos => {
+                const [r, c] = pos.split(',').map(Number);
+                [[0,1],[0,-1],[1,0],[-1,0]].forEach(([dr, dc]) => {
+                    let nr=r+dr, nc=c+dc;
+                    if(nr>=0 && nr<ROWS && nc>=0 && nc<COLS && board[nr][nc]?.type === 'gray') {
+                        board[nr][nc].health--;
+                        if(board[nr][nc].health <= 0) {
+                            board[nr][nc].type = 'num';
+                            board[nr][nc].val = Math.floor(Math.random()*7)+1;
+                        }
+                    }
+                });
+                board[r][c] = null;
+                score += (10 * comboCount);
+            });
+            document.getElementById('score').innerText = score;
+            applyGravityLogic();
+            await waitForFalling();
+        } else {
+            changed = false;
+        }
+    }
+}
+
+function applyGravityLogic() {
+    for (let c = 0; c < COLS; c++) {
+        let colItems = [];
+        for (let r = 0; r < ROWS; r++) if (board[r][c]) colItems.push(board[r][c]);
+        for (let r = ROWS - 1; r >= 0; r--) {
+            let item = colItems.pop() || null;
+            board[r][c] = item;
+            if (item) item.targetY = r * SIZE + SIZE/2 + OFFSET_Y;
+        }
+    }
+}
+
+async function riseFloor() {
+    for(let c=0; c<COLS; c++) if(board[0][c]) { triggerGameOver(); return; }
+    
+    while (riseOffset < SIZE) {
+        riseOffset += 2;
+        await new Promise(r => requestAnimationFrame(r));
+    }
+
+    for (let r = 0; r < ROWS - 1; r++) board[r] = board[r+1];
+    board[ROWS-1] = Array(COLS).fill(0).map((_, c) => {
+        let d = new Disc(0, c, (ROWS)*SIZE + SIZE/2 + OFFSET_Y, 'gray', 2);
+        d.targetY = (ROWS-1)*SIZE + SIZE/2 + OFFSET_Y;
+        return d;
+    });
+    
+    for(let r=0; r<ROWS; r++) {
+        for(let c=0; c<COLS; c++) {
+            if(board[r][c]) {
+                board[r][c].y = r * SIZE + SIZE/2 + OFFSET_Y;
+                board[r][c].targetY = board[r][c].y;
+            }
+        }
+    }
+    riseOffset = 0;
+    await runChainReactions();
+}
+
+// --- UI & LEADERBOARD ---
+function updateComboUI() {
+    const ui = document.getElementById('combo-ui');
+    ui.innerText = comboCount > 1 ? `COMBO X${comboCount}` : '';
+}
+
+async function triggerGameOver() {
+    isBusy = true;
+    document.getElementById('modal-score').innerText = score;
+    document.getElementById('overlay').style.display = 'flex';
+    
+    const { data } = await supabaseClient.from('leaderboards').select('name, score').order('score', { ascending: false }).limit(5);
+    if (data) {
+        document.getElementById('leaderboard-list').innerHTML = "<b>TOP 5:</b><br>" + 
+            data.map((e, i) => `<div class="${i===0?'top-rank':''}">${i+1}. ${e.name} - ${e.score}</div>`).join('');
+    }
+}
+
+document.getElementById('saveBtn').onclick = async () => {
+    const name = document.getElementById('playerName').value || "Anon";
+    await supabaseClient.from('leaderboards').insert([{ name, score }]);
+    location.reload();
+};
+
+function waitForFalling() {
+    return new Promise(resolve => {
+        function check() { if (!isAnyMoving()) resolve(); else requestAnimationFrame(check); }
+        check();
+    });
+}
+
+function mainLoop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = "#333";
+    for(let r=0; r<ROWS; r++) for(let c=0; c<COLS; c++) ctx.strokeRect(c*SIZE, r*SIZE + OFFSET_Y, SIZE, SIZE);
+    
+    new Disc(nextDiscVal, 3, 25).draw(); 
+
+    for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+            if (board[r][c]) {
+                board[r][c].update();
+                board[r][c].draw(riseOffset);
+            }
+        }
+    }
+    requestAnimationFrame(mainLoop);
+}
+
+canvas.addEventListener('mousedown', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const col = Math.floor((e.clientX - rect.left) / SIZE);
+    dropDisc(col);
+});
+
+mainLoop();
+</script>
+</body>
+</html>
