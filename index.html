@@ -200,7 +200,7 @@ async function runChainReactions() {
                     }
                 });
                 board[r][c] = null;
-                score += (10 * comboCount);
+                score += getDrop7Score(comboCount);
             });
             document.getElementById('score').innerText = score;
             applyGravityLogic();
@@ -248,6 +248,10 @@ async function riseFloor() {
     }
     riseOffset = 0;
     await runChainReactions();
+}
+function getDrop7Score(n) {
+    // n is the comboCount (1, 2, 3...)
+    return (7 * Math.pow(n, 3)) - (21 * Math.pow(n, 2)) + (35 * n) - 14;
 }
 
 // --- UI & LEADERBOARD ---
