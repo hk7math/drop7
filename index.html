@@ -234,26 +234,85 @@ function triggerGameOver() {
 }
 
 /** 5. RENDER & INPUT **/
+/** UPDATED DRAW LOOP WITH GHOST INDICATOR **/
 function draw() {
-    ctx.clearRect(0,0,350,400);
-    ctx.strokeStyle = "rgba(255,255,255,0.05)";
+    ctx.clearRect(0, 0, 350, 400);
+    
+    // Draw Grid
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
     for(let i=0; i<=COLS; i++) { ctx.beginPath(); ctx.moveTo(i*SIZE, OFFSET_Y); ctx.lineTo(i*SIZE, 400); ctx.stroke(); }
     for(let i=0; i<=ROWS; i++) { ctx.beginPath(); ctx.moveTo(0, i*SIZE + OFFSET_Y); ctx.lineTo(350, i*SIZE + OFFSET_Y); ctx.stroke(); }
-    if(!isBusy) new Disc(nextVal, previewCol, 25).draw();
-    for(let r=0; r<ROWS; r++) for(let c=0; c<COLS; c++) if(board[r][c]) { board[r][c].update(); board[r][c].draw(); }
+
+    if(!isBusy) {
+        // 1. Find where the disc WOULD land
+        let ghostR = -1;
+        for (let r = ROWS - 1; r >= 0; r--) {
+            if (!board[r][previewCol]) { ghostR = r; break; }
+        }
+
+        // 2. Draw the Ghost Indicator (The "Landing Zone")
+        if (ghostR !== -1) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(previewCol * SIZE + SIZE/2, ghostR * SIZE + SIZE/2 + OFFSET_Y, SIZE/2 - 8, 0, Math.PI*2);
+            ctx.strokeStyle = "rgba(255, 215, 0, 0.4)"; // Faint gold
+            ctx.setLineDash([4, 4]); // Dashed effect
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        // 3. Draw the Preview Disc (The "Hand")
+        new Disc(nextVal, previewCol, 25).draw();
+    }
+
+    // Draw active discs
+    for(let r=0; r<ROWS; r++) {
+        for(let c=0; c<COLS; c++) {
+            if(board[r][c]) {
+                board[r][c].update();
+                board[r][c].draw();
+            }
+        }
+    }
     requestAnimationFrame(draw);
 }
 
+/** UPDATED INPUT LOGIC **/
 const onInput = (e) => {
     const rect = canvas.getBoundingClientRect();
-    const x = ((e.clientX || (e.touches && e.touches[0].clientX)) - rect.left);
+    // Get the horizontal position relative to the canvas
+    const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+    const x = clientX - rect.left;
+    
+    // Update the preview column (the horizontal "aim")
     previewCol = Math.floor(Math.max(0, Math.min(x, 349)) / SIZE);
-    if (e.type === 'pointerdown' || e.type === 'mousedown') handleDrop(previewCol);
-};
 
-canvas.addEventListener('pointermove', onInput);
-canvas.addEventListener('pointerdown', onInput);
-document.getElementById('submitBtn').onclick = submitScore;
+    // ONLY drop if it's a click/tap, NOT on move
+    if (e.type === 'pointerup' || e.type === 'mouseup') {
+        handleDrop(previewCol);
+    }
+};
+// Ensure events are distinct
+canvas.removeEventListener('pointermove', onInput);
+canvas.removeEventListener('pointerdown', onInput);
+canvas.removeEventListener('pointerup', onInput);
+
+canvas.addEventListener('pointermove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left);
+    previewCol = Math.floor(Math.max(0, Math.min(x, 349)) / SIZE);
+});
+    
+canvas.addEventListener('pointerdown', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left);
+    previewCol = Math.floor(Math.max(0, Math.min(x, 349)) / SIZE);
+});
+
+canvas.addEventListener('pointerup', (e) => {
+    handleDrop(previewCol);
+});
 
 fetchLeaderboard();
 draw();
