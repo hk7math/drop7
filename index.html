@@ -119,7 +119,7 @@ async function fetchLeaderboard() {
 }
 
 async function submitScore() {
-    const name = document.getElementById('playerName').value || "Anonymous";
+    const name = document.getElementById('playerName').value || "Anon";
     if (supabaseClient && score > 0) {
         await supabaseClient.from('leaderboards').insert([{ name, score }]);
     }
@@ -313,6 +313,7 @@ canvas.addEventListener('pointerdown', (e) => {
 canvas.addEventListener('pointerup', (e) => {
     handleDrop(previewCol);
 });
+document.getElementById('submitBtn').onclick = submitScore;
 
 fetchLeaderboard();
 draw();
