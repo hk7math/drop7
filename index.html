@@ -3,18 +3,43 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Drop7 - Final Fix</title>
+    <title>Drop7 - Elite Edition</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
-        body { background: #0a0a0c; color: #fff; font-family: 'Inter', sans-serif; margin: 0; display: flex; flex-direction: column; align-items: center; touch-action: none; overflow: hidden; height: 100vh; }
-        #hud { width: 350px; display: flex; justify-content: space-around; padding: 20px 0; background: #111; border-bottom: 2px solid #333; }
+        :root { --accent: #FFD700; --bg: #0a0a0c; --panel: rgba(255, 255, 255, 0.05); }
+        body { 
+            background: var(--bg); color: #fff; font-family: 'Inter', system-ui, sans-serif; 
+            margin: 0; display: flex; flex-direction: column; align-items: center; 
+            touch-action: none; overflow-x: hidden; min-height: 100vh;
+        }
+        
+        /* HUD */
+        #hud { width: 350px; display: flex; justify-content: space-around; padding: 20px 0; background: #111; border-bottom: 2px solid #333; margin-bottom: 15px; }
         .stat { text-align: center; }
         .label { font-size: 10px; color: #888; display: block; letter-spacing: 1px; margin-bottom: 4px; }
-        .val { font-size: 24px; font-weight: bold; font-variant-numeric: tabular-nums; }
-        #game-area { position: relative; width: 350px; height: 400px; margin-top: 20px; }
-        canvas { background: #111; border: 4px solid #1a1a1a; display: block; cursor: pointer; border-radius: 8px; }
-        #overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.9); display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 999; border-radius: 8px; }
-        button { background: #FFD700; border: none; padding: 12px 30px; font-weight: bold; border-radius: 5px; cursor: pointer; color: #000; font-size: 16px; }
+        .val { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
+        
+        /* Game Area */
+        #game-area { position: relative; width: 350px; height: 400px; }
+        canvas { background: #111; border: 4px solid #1a1a1a; display: block; cursor: pointer; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+
+        /* Leaderboard Panel */
+        .leaderboard-container { 
+            width: 330px; margin-top: 20px; background: var(--panel); 
+            border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 15px;
+            backdrop-filter: blur(10px);
+        }
+        .lb-title { font-size: 12px; color: var(--accent); font-weight: 800; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; display: block; }
+        .lb-row { display: flex; justify-content: space-between; font-size: 14px; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .lb-row:last-child { border: none; }
+        .lb-name { color: #ccc; }
+        .lb-score { font-weight: bold; color: #fff; }
+
+        /* Overlay */
+        #overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.95); display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 999; border-radius: 8px; }
+        input { background: #222; border: 1px solid #444; color: #fff; padding: 12px; margin-bottom: 10px; width: 80%; border-radius: 5px; outline: none; text-align: center; font-size: 16px; }
+        button { background: var(--accent); color: #000; border: none; padding: 12px 30px; font-weight: 800; border-radius: 5px; cursor: pointer; transition: transform 0.1s; }
+        button:active { transform: scale(0.95); }
     </style>
 </head>
 <body>
@@ -27,12 +52,20 @@
     <div id="game-area">
         <canvas id="gameCanvas" width="350" height="400"></canvas>
         <div id="overlay">
-            <h1 style="color:#FFD700; margin-bottom:10px;">GAME OVER</h1>
-            <button onclick="location.reload()">TRY AGAIN</button>
+            <h1 style="color:var(--accent); margin: 0 0 10px 0;">GAME OVER</h1>
+            <p id="final-score-display" style="font-size:24px; margin-bottom: 20px;">0</p>
+            <input type="text" id="playerName" placeholder="Nickname" maxlength="10">
+            <button id="submitBtn">SUBMIT & REPLAY</button>
         </div>
     </div>
 
+    <div class="leaderboard-container">
+        <span class="lb-title">Global Top 5</span>
+        <div id="lb-content">Loading rankings...</div>
+    </div>
+
 <script>
+/** 1. SUPABASE INITIALIZATION **/
 const SUPABASE_URL = 'https://pspgokziawpuhjrmsnhw.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_D6d77UoUxIqVC9nsriL0Ig_ouLktESd';
 let supabaseClient = null;
@@ -42,6 +75,7 @@ const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const ROWS = 7, COLS = 7, SIZE = 50, OFFSET_Y = 50;
 
+/** 2. STATE **/
 let board = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
 let score = 0, movesLeft = 5, comboCount = 0, isBusy = false;
 let nextVal = Math.floor(Math.random() * 7) + 1;
@@ -55,68 +89,74 @@ class Disc {
     update() {
         if (Math.abs(this.targetY - this.y) > 0.1) {
             this.y += (this.targetY - this.y) * 0.35;
-        } else {
-            this.y = this.targetY;
-        }
+        } else { this.y = this.targetY; }
     }
     draw() {
         const colors = ["#444", "#FF5D5D", "#4BB543", "#3B82F6", "#A855F7", "#FACC15", "#2DD4BF", "#F97316"];
         ctx.beginPath();
         ctx.arc(this.col * SIZE + SIZE/2, this.y, SIZE/2 - 4, 0, Math.PI*2);
-        ctx.fillStyle = this.type === 'gray' ? (this.health === 2 ? "#333" : "#999") : colors[this.val];
+        ctx.fillStyle = this.type === 'gray' ? (this.health === 2 ? "#222" : "#999") : colors[this.val];
         ctx.fill();
         if(this.type === 'num') {
-            ctx.fillStyle = "white"; ctx.font = "bold 20px Inter, sans-serif"; ctx.textAlign="center"; ctx.textBaseline="middle";
+            ctx.fillStyle = "white"; ctx.font = "bold 20px Arial"; ctx.textAlign="center"; ctx.textBaseline="middle";
             ctx.fillText(this.val, this.col * SIZE + SIZE/2, this.y);
         }
     }
 }
 
-function checkMoving() {
-    for(let r=0; r<ROWS; r++) {
-        for(let c=0; c<COLS; c++) {
-            if(board[r][c] && Math.abs(board[r][c].y - board[r][c].targetY) > 0.5) return true;
-        }
+/** 3. LEADERBOARD LOGIC **/
+async function fetchLeaderboard() {
+    if (!supabaseClient) return;
+    const { data } = await supabaseClient.from('leaderboards').select('name, score').order('score', { ascending: false }).limit(5);
+    if (data) {
+        document.getElementById('lb-content').innerHTML = data.map(entry => `
+            <div class="lb-row">
+                <span class="lb-name">${entry.name}</span>
+                <span class="lb-score">${entry.score.toLocaleString()}</span>
+            </div>
+        `).join('');
     }
+}
+
+async function submitScore() {
+    const name = document.getElementById('playerName').value || "Anonymous";
+    if (supabaseClient && score > 0) {
+        await supabaseClient.from('leaderboards').insert([{ name, score }]);
+    }
+    location.reload();
+}
+
+/** 4. ENGINE CORE **/
+function checkMoving() {
+    for(let r=0; r<ROWS; r++) 
+        for(let c=0; c<COLS; c++) 
+            if(board[r][c] && Math.abs(board[r][c].y - board[r][c].targetY) > 0.5) return true;
     return false;
 }
 
 async function waitMoving() {
     return new Promise(resolve => {
-        let timeout = setTimeout(resolve, 2000); // Failsafe
-        const check = () => {
-            if (!checkMoving()) { clearTimeout(timeout); resolve(); }
-            else requestAnimationFrame(check);
-        };
+        let timeout = setTimeout(resolve, 1500);
+        const check = () => { if (!checkMoving()) { clearTimeout(timeout); resolve(); } else requestAnimationFrame(check); };
         check();
     });
 }
 
 async function handleDrop(col) {
     if (isBusy || checkMoving()) return;
-    
     let targetR = -1;
     for (let r = ROWS - 1; r >= 0; r--) { if (!board[r][col]) { targetR = r; break; } }
-    
     if (targetR !== -1) {
-        isBusy = true;
-        comboCount = 0;
-        
+        isBusy = true; comboCount = 0;
         board[targetR][col] = new Disc(nextVal, col, 25, 'num');
         board[targetR][col].targetY = targetR * SIZE + SIZE/2 + OFFSET_Y;
         nextVal = Math.floor(Math.random() * 7) + 1;
-
         await waitMoving();
         await runChains();
-
         movesLeft--;
-        if (movesLeft <= 0) {
-            await riseFloor();
-            movesLeft = 5;
-        }
-        
+        if (movesLeft <= 0) { await riseFloor(); movesLeft = 5; }
         document.getElementById('moves').innerText = movesLeft;
-        isBusy = false; // Disc only appears when this is false
+        isBusy = false;
     }
 }
 
@@ -125,7 +165,6 @@ async function runChains() {
     while (changed) {
         await waitMoving();
         let toPop = [];
-
         for(let r=0; r<ROWS; r++) {
             let start = -1;
             for(let c=0; c<=COLS; c++) {
@@ -141,7 +180,6 @@ async function runChains() {
             let count = board.filter(row => row[c]).length;
             for(let r=0; r<ROWS; r++) if(board[r][c]?.type === 'num' && board[r][c].val === count) toPop.push({r, c});
         }
-
         if (toPop.length > 0) {
             comboCount++;
             await new Promise(res => setTimeout(res, 250));
@@ -159,9 +197,7 @@ async function runChains() {
             });
             document.getElementById('score').innerText = Math.floor(score).toLocaleString();
             gravity();
-        } else {
-            changed = false;
-        }
+        } else { changed = false; }
     }
 }
 
@@ -177,36 +213,33 @@ function gravity() {
 }
 
 async function riseFloor() {
-    // Check if game over (top row filled)
-    for(let c=0; c<COLS; c++) if(board[0][c]) { document.getElementById('overlay').style.display='flex'; isBusy = true; return; }
-    
-    // Shift everything up
+    for(let c=0; c<COLS; c++) if(board[0][c]) { triggerGameOver(); return; }
     for (let r = 0; r < ROWS - 1; r++) {
         board[r] = board[r+1];
         board[r].forEach(d => { if(d) d.targetY -= SIZE; });
     }
-
-    // New bottom row
     board[ROWS-1] = Array(COLS).fill(0).map((_, c) => {
         let d = new Disc(0, c, (ROWS)*SIZE + SIZE/2 + OFFSET_Y, 'gray', 2);
         d.targetY = (ROWS-1)*SIZE + SIZE/2 + OFFSET_Y;
         return d;
     });
-
     await waitMoving();
     await runChains();
 }
 
+function triggerGameOver() {
+    isBusy = true;
+    document.getElementById('final-score-display').innerText = score.toLocaleString();
+    document.getElementById('overlay').style.display = 'flex';
+}
+
+/** 5. RENDER & INPUT **/
 function draw() {
     ctx.clearRect(0,0,350,400);
-    ctx.strokeStyle = "#222";
+    ctx.strokeStyle = "rgba(255,255,255,0.05)";
     for(let i=0; i<=COLS; i++) { ctx.beginPath(); ctx.moveTo(i*SIZE, OFFSET_Y); ctx.lineTo(i*SIZE, 400); ctx.stroke(); }
     for(let i=0; i<=ROWS; i++) { ctx.beginPath(); ctx.moveTo(0, i*SIZE + OFFSET_Y); ctx.lineTo(350, i*SIZE + OFFSET_Y); ctx.stroke(); }
-
-    if(!isBusy) {
-        new Disc(nextVal, previewCol, 25).draw();
-    }
-
+    if(!isBusy) new Disc(nextVal, previewCol, 25).draw();
     for(let r=0; r<ROWS; r++) for(let c=0; c<COLS; c++) if(board[r][c]) { board[r][c].update(); board[r][c].draw(); }
     requestAnimationFrame(draw);
 }
@@ -220,6 +253,9 @@ const onInput = (e) => {
 
 canvas.addEventListener('pointermove', onInput);
 canvas.addEventListener('pointerdown', onInput);
+document.getElementById('submitBtn').onclick = submitScore;
+
+fetchLeaderboard();
 draw();
 </script>
 </body>
