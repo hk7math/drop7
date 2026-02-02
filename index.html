@@ -193,7 +193,7 @@ async function runChains() {
                     }
                 });
                 board[p.r][p.c] = null;
-                score += (7 * Math.pow(comboCount, 3)) - (21 * Math.pow(comboCount, 2)) + (35 * comboCount) - 14;
+                score += (7 * Math.pow(comboCount, 3) + (45 * Math.pow(comboCount, 2)) - (64 * comboCount) +54)/6;
             });
             document.getElementById('score').innerText = Math.floor(score).toLocaleString();
             gravity();
